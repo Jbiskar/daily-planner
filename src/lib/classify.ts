@@ -1,0 +1,155 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { createServiceClient } from "@/lib/supabase/server";
+import type { EventCategory, Event } from "@/types/database";
+
+const anthropic = new Anthropic();
+
+interface ClassificationResult {
+  project_id: string | null;
+  category: EventCategory;
+  confidence: number;
+  stakeholder_ids: string[];
+  title: string;
+  summary: string;
+}
+
+/**
+ * Classify a raw event using Claude. Fetches active projects and stakeholders
+ * from Supabase so Claude can route the event to the right project.
+ */
+export async function classifyEvent(
+  rawText: string,
+  source: Event["source"],
+  rawPayload?: Record<string, unknown>
+): Promise<ClassificationResult> {
+  const supabase = createServiceClient();
+
+  // Fetch active projects and stakeholders for context
+  const [{ data: projects }, { data: stakeholders }] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("id, name, description")
+      .in("status", ["active", "paused"]),
+    supabase
+      .from("stakeholders")
+      .select("id, name, email, role, org"),
+  ]);
+
+  const projectList = (projects ?? [])
+    .map((p) => `- ${p.name} (${p.id}): ${p.description ?? "no description"}`)
+    .join("\n");
+
+  const stakeholderList = (stakeholders ?? [])
+    .map((s) => `- ${s.name} (${s.id}): ${s.role ?? ""} ${s.org ? `@ ${s.org}` : ""}`.trim())
+    .join("\n");
+
+  const message = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    system: `You are a project intelligence assistant. Given an incoming event, determine:
+1. Which project it belongs to (from the list provided), or null if no match
+2. The event category: meeting, task, decision, blocker, update, idea, followup, note
+3. A confidence score (0.0–1.0)
+4. Which stakeholders are mentioned or involved (by ID from the list)
+5. A short title
+6. A one-line summary
+
+Active projects:
+${projectList || "(none yet)"}
+
+Known stakeholders:
+${stakeholderList || "(none yet)"}
+
+Respond ONLY with JSON:
+{ "project_id": "uuid-or-null", "category": "...", "confidence": 0.95, "stakeholder_ids": ["..."], "title": "...", "summary": "..." }`,
+    messages: [
+      {
+        role: "user",
+        content: `Source: ${source}\n\nContent:\n${rawText}${
+          rawPayload ? `\n\nRaw payload (for additional context):\n${JSON.stringify(rawPayload, null, 2).slice(0, 2000)}` : ""
+        }`,
+      },
+    ],
+  });
+
+  const text =
+    message.content[0].type === "text" ? message.content[0].text : "";
+
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      project_id: parsed.project_id || null,
+      category: parsed.category,
+      confidence: parsed.confidence,
+      stakeholder_ids: parsed.stakeholder_ids ?? [],
+      title: parsed.title,
+      summary: parsed.summary,
+    };
+  } catch {
+    // Fallback if Claude doesn't return valid JSON
+    return {
+      project_id: null,
+      category: "note",
+      confidence: 0.3,
+      stakeholder_ids: [],
+      title: rawText.slice(0, 80),
+      summary: rawText.slice(0, 200),
+    };
+  }
+}
+
+/**
+ * Ingest + classify: store the raw event, classify it, then update with classification.
+ */
+export async function ingestAndClassify(
+  source: Event["source"],
+  title: string,
+  body: string,
+  rawPayload?: Record<string, unknown>,
+  sourceId?: string,
+  occurredAt?: string
+): Promise<Event> {
+  const supabase = createServiceClient();
+
+  // 1. Insert raw event (unclassified)
+  const { data: event, error: insertError } = await supabase
+    .from("events")
+    .insert({
+      source,
+      source_id: sourceId ?? null,
+      title,
+      body,
+      raw_payload: rawPayload ?? null,
+      occurred_at: occurredAt ?? new Date().toISOString(),
+    })
+    .select()
+    .single();
+
+  if (insertError || !event) {
+    throw new Error(`Failed to insert event: ${insertError?.message}`);
+  }
+
+  // 2. Classify with Claude
+  const classification = await classifyEvent(body || title, source, rawPayload);
+
+  // 3. Update event with classification
+  const { data: classified, error: updateError } = await supabase
+    .from("events")
+    .update({
+      project_id: classification.project_id,
+      category: classification.category,
+      title: classification.title,
+      classification_confidence: classification.confidence,
+      classified_at: new Date().toISOString(),
+      stakeholder_ids: classification.stakeholder_ids,
+    })
+    .eq("id", event.id)
+    .select()
+    .single();
+
+  if (updateError || !classified) {
+    throw new Error(`Failed to update classification: ${updateError?.message}`);
+  }
+
+  return classified as Event;
+}
