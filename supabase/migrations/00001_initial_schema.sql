@@ -4,6 +4,9 @@
 -- Enable UUID generation
 create extension if not exists "pgcrypto";
 
+-- Enable pgvector for embeddings
+create extension if not exists "vector";
+
 -- ============================================================
 -- PROJECTS
 -- A project is a top-level container for related work.
