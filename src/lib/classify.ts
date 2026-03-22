@@ -2,7 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { EventCategory, Event } from "@/types/database";
 
-const anthropic = new Anthropic();
+let _anthropic: Anthropic | null = null;
+function getAnthropic() {
+  if (!_anthropic) _anthropic = new Anthropic();
+  return _anthropic;
+}
 
 interface ClassificationResult {
   project_id: string | null;
@@ -43,7 +47,7 @@ export async function classifyEvent(
     .map((s) => `- ${s.name} (${s.id}): ${s.role ?? ""} ${s.org ? `@ ${s.org}` : ""}`.trim())
     .join("\n");
 
-  const message = await anthropic.messages.create({
+  const message = await getAnthropic().messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 1024,
     system: `You are a project intelligence assistant. Given an incoming event, determine:

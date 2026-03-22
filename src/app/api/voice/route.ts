@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { ingestAndClassify } from "@/lib/classify";
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI();
+  return _openai;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,7 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Transcribe with Whisper
-    const transcription = await openai.audio.transcriptions.create({
+    const transcription = await getOpenAI().audio.transcriptions.create({
       model: "whisper-1",
       file: audioFile,
     });
