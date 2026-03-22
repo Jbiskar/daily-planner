@@ -2,7 +2,38 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createServiceClient } from "@/lib/supabase/server";
 
-const anthropic = new Anthropic();
+let _anthropic: Anthropic | null = null;
+function getAnthropic() {
+  if (!_anthropic) _anthropic = new Anthropic();
+  return _anthropic;
+}
+
+/**
+ * GET /api/updates
+ * List update drafts, optionally filtered by project_id.
+ */
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const projectId = searchParams.get("project_id");
+
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("update_history")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  return NextResponse.json(data);
+}
 
 /**
  * POST /api/updates
@@ -75,7 +106,7 @@ export async function POST(req: NextRequest) {
       )
       .join("\n\n");
 
-    const message = await anthropic.messages.create({
+    const message = await getAnthropic().messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 2048,
       system: `You are a project intelligence assistant drafting a stakeholder update for the project "${project.name}".${stakeholderContext}
