@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { ingestAndClassify } from "@/lib/classify";
+import { requireApiKey } from "@/lib/auth";
 
 let _openai: OpenAI | null = null;
 function getOpenAI() {
@@ -9,6 +10,9 @@ function getOpenAI() {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireApiKey(req);
+  if (authError) return authError;
+
   try {
     const formData = await req.formData();
     const audioFile = formData.get("audio") as File | null;

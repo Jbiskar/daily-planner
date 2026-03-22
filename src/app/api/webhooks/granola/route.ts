@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ingestAndClassify } from "@/lib/classify";
+import { requireApiKey } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
+  const authError = requireApiKey(req);
+  if (authError) return authError;
+
   try {
     const payload = await req.json();
 
