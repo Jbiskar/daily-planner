@@ -22,15 +22,17 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-screen w-56 flex-col border-r bg-card">
-      <div className="flex items-center gap-2 px-4 py-5">
-        <Mic className="h-5 w-5 text-primary" />
+    <aside className="flex h-screen w-60 flex-col bg-indigo-600 text-white">
+      <div className="flex items-center gap-3 px-5 py-6">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/15 backdrop-blur-sm">
+          <Mic className="h-4 w-4 text-white" />
+        </div>
         <span className="text-lg font-semibold tracking-tight">
           Daily Planner
         </span>
       </div>
 
-      <nav className="flex-1 space-y-1 px-2 py-2">
+      <nav className="flex-1 space-y-1 px-3 py-2">
         {nav.map(({ label, href, icon: Icon }) => {
           const active =
             href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -39,10 +41,10 @@ export function Sidebar() {
               key={href}
               href={href}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
                 active
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  ? "bg-white/15 text-white"
+                  : "text-white/70 hover:bg-white/10 hover:text-white"
               )}
             >
               <Icon className="h-4 w-4" />
@@ -52,7 +54,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t px-4 py-3 text-xs text-muted-foreground">
+      <div className="px-5 py-4 text-xs text-white/60">
         Project Intelligence
       </div>
     </aside>
