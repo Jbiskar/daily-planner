@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
   FolderKanban,
-  Activity,
+  ListTodo,
   FileText,
   Mic,
 } from "lucide-react";
@@ -14,7 +14,7 @@ import {
 const nav = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Projects", href: "/projects", icon: FolderKanban },
-  { label: "Events", href: "/events", icon: Activity },
+  { label: "Tasks", href: "/tasks", icon: ListTodo },
   { label: "Updates", href: "/updates", icon: FileText },
 ];
 

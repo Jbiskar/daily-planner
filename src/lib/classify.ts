@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createServiceClient } from "@/lib/supabase/server";
-import type { EventCategory, Event } from "@/types/database";
+import type {
+  EventCategory,
+  Event,
+  Workspace,
+  TaskPriority,
+} from "@/types/database";
 
 let _anthropic: Anthropic | null = null;
 function getAnthropic() {
@@ -15,6 +20,9 @@ interface ClassificationResult {
   stakeholder_ids: string[];
   title: string;
   summary: string;
+  workspace: Workspace | null;
+  priority: TaskPriority | null;
+  due_date: string | null;
 }
 
 /**
@@ -58,6 +66,12 @@ export async function classifyEvent(
 5. A short title
 6. A one-line summary
 
+Also determine:
+- workspace — one of: personal, atlan, landit, general.
+  Jake's dual life: Atlan is his day job (weekday 9–5 work, meetings, Granola notes). Landit (Just Land It / JLI) is his startup, nights and weekends. Personal = non-work. General = catch-all when unclear.
+- priority — one of: high, medium, low. Infer from urgency signals ("ASAP", "blocker", soft language).
+- due_date — ISO 8601 timestamp or null. Parse relative dates like "by Friday", "next Tuesday", "EOD", "tomorrow morning".
+
 Active projects:
 ${projectList || "(none yet)"}
 
@@ -65,7 +79,7 @@ Known stakeholders:
 ${stakeholderList || "(none yet)"}
 
 Respond ONLY with JSON:
-{ "project_id": "uuid-or-null", "category": "...", "confidence": 0.95, "stakeholder_ids": ["..."], "title": "...", "summary": "..." }`,
+{ "project_id": "uuid-or-null", "category": "...", "confidence": 0.95, "stakeholder_ids": ["..."], "title": "...", "summary": "...", "workspace": "...", "priority": "...", "due_date": "ISO-8601-or-null" }`,
     messages: [
       {
         role: "user",
@@ -88,6 +102,9 @@ Respond ONLY with JSON:
       stakeholder_ids: parsed.stakeholder_ids ?? [],
       title: parsed.title,
       summary: parsed.summary,
+      workspace: parsed.workspace ?? null,
+      priority: parsed.priority ?? null,
+      due_date: parsed.due_date ?? null,
     };
   } catch {
     // Fallback if Claude doesn't return valid JSON
@@ -98,6 +115,9 @@ Respond ONLY with JSON:
       stakeholder_ids: [],
       title: rawText.slice(0, 80),
       summary: rawText.slice(0, 200),
+      workspace: null,
+      priority: null,
+      due_date: null,
     };
   }
 }
@@ -146,6 +166,9 @@ export async function ingestAndClassify(
       classification_confidence: classification.confidence,
       classified_at: new Date().toISOString(),
       stakeholder_ids: classification.stakeholder_ids,
+      workspace: classification.workspace,
+      priority: classification.priority,
+      due_date: classification.due_date,
     })
     .eq("id", event.id)
     .select()
