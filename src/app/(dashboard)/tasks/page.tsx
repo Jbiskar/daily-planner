@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskSheet } from "@/components/task-sheet";
@@ -194,6 +202,39 @@ export default function TasksPage() {
     applyUpdate(updated);
   };
 
+  const moveToDay = (id: string, dayIndex: number) => {
+    const event = events.find((e) => e.id === id);
+    if (!event || event.source === "google_calendar") return;
+    const target = addDays(weekStart, dayIndex);
+    if (event.due_date) {
+      const orig = new Date(event.due_date);
+      if (!Number.isNaN(orig.getTime())) {
+        target.setHours(
+          orig.getHours(),
+          orig.getMinutes(),
+          orig.getSeconds(),
+          0
+        );
+      } else {
+        target.setHours(9, 0, 0, 0);
+      }
+    } else {
+      target.setHours(9, 0, 0, 0);
+    }
+    const iso = target.toISOString();
+    if (iso === event.due_date) return;
+    applyUpdate({ ...event, due_date: iso });
+    patch(id, { due_date: iso });
+  };
+
+  const moveToUnscheduled = (id: string) => {
+    const event = events.find((e) => e.id === id);
+    if (!event || event.source === "google_calendar") return;
+    if (event.due_date === null) return;
+    applyUpdate({ ...event, due_date: null });
+    patch(id, { due_date: null });
+  };
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -257,6 +298,7 @@ export default function TasksPage() {
           title="Unscheduled"
           subtitle={`${buckets.unscheduled.length} open`}
           tone="bg-slate-900 text-white"
+          onDropTask={moveToUnscheduled}
         >
           {buckets.unscheduled.length === 0 ? (
             <EmptyColumn text="Nothing here." />
@@ -282,6 +324,7 @@ export default function TasksPage() {
               tone={
                 isToday ? "bg-indigo-600 text-white" : "bg-white text-slate-700 border"
               }
+              onDropTask={(id) => moveToDay(id, i)}
             >
               {buckets.days[i].length === 0 ? (
                 <EmptyColumn text="—" />
@@ -314,10 +357,41 @@ interface TaskColumnProps {
   title: string;
   subtitle: string;
   tone: string;
-  children: React.ReactNode;
+  onDropTask?: (id: string) => void;
+  children: ReactNode;
 }
 
-function TaskColumn({ title, subtitle, tone, children }: TaskColumnProps) {
+function TaskColumn({
+  title,
+  subtitle,
+  tone,
+  onDropTask,
+  children,
+}: TaskColumnProps) {
+  const [isOver, setIsOver] = useState(false);
+
+  const handleDragOver = (e: DragEvent) => {
+    if (!onDropTask) return;
+    if (!e.dataTransfer.types.includes("text/plain")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (!isOver) setIsOver(true);
+  };
+
+  const handleDragLeave = (e: DragEvent) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && e.currentTarget.contains(related)) return;
+    setIsOver(false);
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    if (!onDropTask) return;
+    e.preventDefault();
+    const id = e.dataTransfer.getData("text/plain");
+    setIsOver(false);
+    if (id) onDropTask(id);
+  };
+
   return (
     <div className="flex min-w-0 flex-col gap-3">
       <div
@@ -329,7 +403,17 @@ function TaskColumn({ title, subtitle, tone, children }: TaskColumnProps) {
         <span className="font-semibold">{title}</span>
         <span className="text-xs opacity-75">{subtitle}</span>
       </div>
-      <div className="space-y-2">{children}</div>
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={cn(
+          "min-h-[4rem] space-y-2 rounded-2xl p-1 transition-colors",
+          isOver && "bg-indigo-50 ring-2 ring-indigo-300"
+        )}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -382,11 +466,18 @@ function TaskCard({ event, onOpen, onPatch }: TaskCardProps) {
     );
   }
 
+  const handleDragStart = (e: DragEvent) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", event.id);
+  };
+
   return (
     <div
+      draggable
+      onDragStart={handleDragStart}
       onClick={onOpen}
       className={cn(
-        "group cursor-pointer rounded-2xl border border-slate-200/70 bg-white p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
+        "group cursor-grab rounded-2xl border border-slate-200/70 bg-white p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md active:cursor-grabbing",
         isDone && "opacity-60"
       )}
     >
@@ -431,23 +522,47 @@ function DueDatePill({
   value: string | null;
   onChange: (v: string) => void;
 }) {
-  const label = value ? formatMonthDay(new Date(value)) : "No date";
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const label = value ? formatMonthDay(new Date(value)) : "Set date";
   const hasDate = !!value;
+
+  const openPicker = (e: MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const el = inputRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === "function") {
+      try {
+        el.showPicker();
+        return;
+      } catch {
+        // fall through
+      }
+    }
+    el.focus();
+    el.click();
+  };
+
   return (
-    <label
+    <button
+      type="button"
+      onClick={openPicker}
       className={cn(
-        "relative inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium",
+        "relative inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium",
         hasDate ? "bg-slate-100 text-slate-700" : UNSET_WORKSPACE_STYLE
       )}
     >
       <span>{label}</span>
       <input
+        ref={inputRef}
         type="date"
-        value={toDateInputValue(value)}
+        value={value ? toDateInputValue(value) : ""}
         onChange={(e) => onChange(e.target.value)}
-        className="absolute inset-0 cursor-pointer opacity-0"
+        className="pointer-events-none absolute h-0 w-0 opacity-0"
+        tabIndex={-1}
+        aria-hidden="true"
       />
-    </label>
+    </button>
   );
 }
 
