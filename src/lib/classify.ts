@@ -67,8 +67,8 @@ export async function classifyEvent(
 6. A one-line summary
 
 Also determine:
-- workspace — one of: personal, atlan, landit, general.
-  Jake's dual life: Atlan is his day job (weekday 9–5 work, meetings, Granola notes). Landit (Just Land It / JLI) is his startup, nights and weekends. Personal = non-work. General = catch-all when unclear.
+- workspace — one of: personal, atlan, landit, consulting, or null if genuinely unclear.
+  Jake's work buckets: Atlan is his day job (weekday 9–5, meetings, Granola notes). Landit (Just Land It / JLI) is his startup, nights and weekends. Consulting is paid client / freelance work outside Atlan and Landit. Personal = non-work. If you can't confidently pick one, return null rather than guessing.
 - priority — one of: high, medium, low. Infer from urgency signals ("ASAP", "blocker", soft language).
 - due_date — ISO 8601 timestamp or null. Parse relative dates like "by Friday", "next Tuesday", "EOD", "tomorrow morning".
 

@@ -24,7 +24,12 @@ export type UpdateStatus = "draft" | "approved" | "sent" | "failed";
 export type UpdateFormat = "markdown" | "slack" | "email" | "plain";
 export type DocType = "general" | "prd" | "meeting_notes" | "slack_thread" | "design_doc" | "runbook";
 
-export type Workspace = "personal" | "atlan" | "landit" | "general";
+export type Workspace =
+  | "personal"
+  | "atlan"
+  | "landit"
+  | "consulting"
+  | "general";
 export type TaskPriority = "high" | "medium" | "low";
 export type TaskStatus = "inbox" | "active" | "done" | "dismissed";
 

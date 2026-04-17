@@ -1,99 +1,178 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskSheet } from "@/components/task-sheet";
 import { cn } from "@/lib/utils";
 import type {
   Event,
-  TaskPriority,
   TaskStatus,
   Workspace,
 } from "@/types/database";
 
-const workspaceStyles: Record<Workspace, string> = {
-  personal: "bg-violet-100 text-violet-700",
+const WORKSPACE_STYLES: Record<Workspace, string> = {
   atlan: "bg-sky-100 text-sky-700",
   landit: "bg-emerald-100 text-emerald-700",
+  consulting: "bg-amber-100 text-amber-700",
+  personal: "bg-violet-100 text-violet-700",
   general: "bg-slate-100 text-slate-600",
 };
 
-const priorityStyles: Record<TaskPriority, string> = {
-  high: "bg-rose-100 text-rose-700",
-  medium: "bg-amber-100 text-amber-700",
-  low: "bg-emerald-100 text-emerald-700",
-};
+const UNSET_WORKSPACE_STYLE = "bg-slate-100 text-slate-500";
 
-const priorityLabel: Record<TaskPriority, string> = {
-  high: "High Priority",
-  medium: "Medium Priority",
-  low: "Low Priority",
-};
-
-const columns: Array<{
-  status: TaskStatus;
-  label: string;
-  tone: string;
-  empty: string;
-}> = [
-  {
-    status: "inbox",
-    label: "Inbox",
-    tone: "bg-indigo-600",
-    empty: "Inbox is empty. Capture a voice note to get started.",
-  },
-  {
-    status: "active",
-    label: "Active",
-    tone: "bg-amber-500",
-    empty: "No active tasks. Confirm items from Inbox to promote them.",
-  },
-  {
-    status: "done",
-    label: "Completed",
-    tone: "bg-emerald-500",
-    empty: "No completed tasks yet.",
-  },
+const WORKSPACE_OPTIONS: Array<{ value: Workspace; label: string }> = [
+  { value: "atlan", label: "Atlan" },
+  { value: "landit", label: "Landit" },
+  { value: "consulting", label: "Consulting" },
+  { value: "personal", label: "Personal" },
 ];
 
-function formatDueDate(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+function startOfWeek(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const dow = d.getDay();
+  const offset = (dow + 6) % 7;
+  d.setDate(d.getDate() - offset);
+  return d;
+}
+
+function addDays(date: Date, n: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+function sameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function formatMonthDay(d: Date): string {
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatTime(d: Date): string {
+  return d.toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
   });
 }
 
+function toDateInputValue(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function fromDateInputValue(value: string): string | null {
+  if (!value) return null;
+  const [y, m, day] = value.split("-").map(Number);
+  if (!y || !m || !day) return null;
+  const d = new Date(y, m - 1, day, 9, 0, 0, 0);
+  return d.toISOString();
+}
+
+function truncateWords(s: string, n: number): string {
+  const words = s.trim().split(/\s+/);
+  if (words.length <= n) return s.trim();
+  return words.slice(0, n).join(" ") + "…";
+}
+
+type Bucket = "unscheduled" | 0 | 1 | 2 | 3 | 4;
+
+function bucketFor(
+  event: Event,
+  weekStart: Date,
+  weekEnd: Date
+): Bucket | null {
+  const isCalendar = event.source === "google_calendar";
+  const refIso = isCalendar ? event.occurred_at : event.due_date;
+
+  if (!refIso) {
+    return isCalendar ? null : "unscheduled";
+  }
+
+  const ref = new Date(refIso);
+  if (Number.isNaN(ref.getTime())) {
+    return isCalendar ? null : "unscheduled";
+  }
+
+  ref.setHours(0, 0, 0, 0);
+
+  if (ref < weekStart) {
+    return isCalendar ? null : 0;
+  }
+  if (ref > weekEnd) return null;
+
+  const dow = ref.getDay();
+  if (dow === 0) return 4;
+  if (dow === 6) return 4;
+  return ((dow + 6) % 7) as 0 | 1 | 2 | 3 | 4;
+}
+
 export default function TasksPage() {
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [showCalendar, setShowCalendar] = useState(false);
   const [selected, setSelected] = useState<Event | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
-    fetch("/api/events?limit=200")
+    fetch("/api/events?limit=500")
       .then((r) => r.json())
       .then((data) => setEvents(Array.isArray(data) ? data : []))
       .finally(() => setLoading(false));
   }, []);
 
-  const grouped = useMemo(() => {
-    const by: Record<TaskStatus, Event[]> = {
-      inbox: [],
-      active: [],
-      done: [],
-      dismissed: [],
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  const weekDays = useMemo(
+    () => Array.from({ length: 5 }, (_, i) => addDays(weekStart, i)),
+    [weekStart]
+  );
+  const weekEnd = useMemo(() => addDays(weekStart, 4), [weekStart]);
+
+  const buckets = useMemo(() => {
+    const out: { unscheduled: Event[]; days: Event[][] } = {
+      unscheduled: [],
+      days: [[], [], [], [], []],
     };
     for (const e of events) {
-      const status = e.task_status ?? "inbox";
-      by[status]?.push(e);
+      if (e.task_status === "dismissed") continue;
+      if (e.source === "google_calendar" && !showCalendar) continue;
+      const b = bucketFor(e, weekStart, weekEnd);
+      if (b === null) continue;
+      if (b === "unscheduled") out.unscheduled.push(e);
+      else out.days[b].push(e);
     }
-    return by;
-  }, [events]);
+    const sortByTime = (arr: Event[]) =>
+      arr.sort((a, b) => {
+        const ta =
+          a.source === "google_calendar"
+            ? new Date(a.occurred_at ?? 0).getTime()
+            : Infinity;
+        const tb =
+          b.source === "google_calendar"
+            ? new Date(b.occurred_at ?? 0).getTime()
+            : Infinity;
+        return ta - tb;
+      });
+    out.days.forEach(sortByTime);
+    return out;
+  }, [events, weekStart, weekEnd, showCalendar]);
 
   const openSheet = (event: Event) => {
     setSelected(event);
@@ -104,11 +183,11 @@ export default function TasksPage() {
     setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
   };
 
-  const patchStatus = async (id: string, task_status: TaskStatus) => {
+  const patch = async (id: string, body: Record<string, unknown>) => {
     const res = await fetch(`/api/events/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_status }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) return;
     const updated: Event = await res.json();
@@ -123,29 +202,102 @@ export default function TasksPage() {
     );
   }
 
+  const weekLabel = `${formatMonthDay(weekStart)} – ${formatMonthDay(weekEnd)}`;
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Tasks</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          New captures land in Inbox. Confirm to promote to Active.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Tasks</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Your week at a glance.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center rounded-full border bg-white p-1 shadow-sm">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-full"
+              aria-label="Previous week"
+              onClick={() => setWeekStart((w) => addDays(w, -7))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <button
+              onClick={() => setWeekStart(startOfWeek(new Date()))}
+              className="px-3 text-sm font-medium text-slate-700 hover:text-slate-900"
+            >
+              {weekLabel}
+            </button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-full"
+              aria-label="Next week"
+              onClick={() => setWeekStart((w) => addDays(w, 7))}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <Button
+            variant={showCalendar ? "default" : "outline"}
+            size="sm"
+            className="rounded-full"
+            onClick={() => setShowCalendar((v) => !v)}
+          >
+            <CalendarDays className="mr-1.5 h-4 w-4" />
+            Calendar
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {columns.map((col) => (
-          <TaskColumn
-            key={col.status}
-            label={col.label}
-            tone={col.tone}
-            empty={col.empty}
-            events={grouped[col.status]}
-            onOpen={openSheet}
-            onConfirm={(id) => patchStatus(id, "active")}
-            onDismiss={(id) => patchStatus(id, "dismissed")}
-            onMarkDone={(id) => patchStatus(id, "done")}
-          />
-        ))}
+      <div className="grid gap-3 md:grid-cols-6">
+        <TaskColumn
+          title="Unscheduled"
+          subtitle={`${buckets.unscheduled.length} open`}
+          tone="bg-slate-900 text-white"
+        >
+          {buckets.unscheduled.length === 0 ? (
+            <EmptyColumn text="Nothing here." />
+          ) : (
+            buckets.unscheduled.map((event) => (
+              <TaskCard
+                key={event.id}
+                event={event}
+                onOpen={() => openSheet(event)}
+                onPatch={(body) => patch(event.id, body)}
+              />
+            ))
+          )}
+        </TaskColumn>
+
+        {weekDays.map((day, i) => {
+          const isToday = sameDay(day, today);
+          return (
+            <TaskColumn
+              key={i}
+              title={DAY_LABELS[i]}
+              subtitle={formatMonthDay(day)}
+              tone={
+                isToday ? "bg-indigo-600 text-white" : "bg-white text-slate-700 border"
+              }
+            >
+              {buckets.days[i].length === 0 ? (
+                <EmptyColumn text="—" />
+              ) : (
+                buckets.days[i].map((event) => (
+                  <TaskCard
+                    key={event.id}
+                    event={event}
+                    onOpen={() => openSheet(event)}
+                    onPatch={(body) => patch(event.id, body)}
+                  />
+                ))
+              )}
+            </TaskColumn>
+          );
+        })}
       </div>
 
       <TaskSheet
@@ -159,58 +311,33 @@ export default function TasksPage() {
 }
 
 interface TaskColumnProps {
-  label: string;
+  title: string;
+  subtitle: string;
   tone: string;
-  empty: string;
-  events: Event[];
-  onOpen: (e: Event) => void;
-  onConfirm: (id: string) => void;
-  onDismiss: (id: string) => void;
-  onMarkDone: (id: string) => void;
+  children: React.ReactNode;
 }
 
-function TaskColumn({
-  label,
-  tone,
-  empty,
-  events,
-  onOpen,
-  onConfirm,
-  onDismiss,
-  onMarkDone,
-}: TaskColumnProps) {
+function TaskColumn({ title, subtitle, tone, children }: TaskColumnProps) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-w-0 flex-col gap-3">
       <div
         className={cn(
-          "flex items-center gap-2.5 rounded-2xl px-4 py-3 text-white shadow-sm",
+          "flex items-baseline justify-between rounded-2xl px-4 py-3 shadow-sm",
           tone
         )}
       >
-        <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-white px-1.5 text-xs font-bold text-slate-900">
-          {events.length}
-        </span>
-        <span className="font-medium">{label}</span>
+        <span className="font-semibold">{title}</span>
+        <span className="text-xs opacity-75">{subtitle}</span>
       </div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
 
-      {events.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-10 text-center text-xs text-muted-foreground">
-          {empty}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {events.map((event) => (
-            <TaskCard
-              key={event.id}
-              event={event}
-              onOpen={() => onOpen(event)}
-              onConfirm={() => onConfirm(event.id)}
-              onDismiss={() => onDismiss(event.id)}
-              onMarkDone={() => onMarkDone(event.id)}
-            />
-          ))}
-        </div>
-      )}
+function EmptyColumn({ text }: { text: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-200 bg-white/50 px-3 py-6 text-center text-xs text-slate-400">
+      {text}
     </div>
   );
 }
@@ -218,121 +345,143 @@ function TaskColumn({
 interface TaskCardProps {
   event: Event;
   onOpen: () => void;
-  onConfirm: () => void;
-  onDismiss: () => void;
-  onMarkDone: () => void;
+  onPatch: (body: Record<string, unknown>) => void;
 }
 
-function TaskCard({
-  event,
-  onOpen,
-  onConfirm,
-  onDismiss,
-  onMarkDone,
-}: TaskCardProps) {
+function TaskCard({ event, onOpen, onPatch }: TaskCardProps) {
+  const isCalendar = event.source === "google_calendar";
   const isDone = event.task_status === "done";
-  const isPastDue =
-    !!event.due_date && new Date(event.due_date).getTime() < Date.now() && !isDone;
+  const hasLink = (event.links?.length ?? 0) > 0;
+
+  const displayTitle = truncateWords(event.title || "(untitled)", 10);
+
+  const handleDueDateChange = (value: string) => {
+    onPatch({ due_date: fromDateInputValue(value) });
+  };
+
+  const handleWorkspaceChange = (value: string) => {
+    onPatch({ workspace: value === "" ? null : value });
+  };
+
+  if (isCalendar) {
+    const start = event.occurred_at ? new Date(event.occurred_at) : null;
+    return (
+      <div
+        onClick={onOpen}
+        className="group cursor-pointer rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 p-3 transition-colors hover:bg-indigo-50"
+      >
+        {start && (
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
+            {formatTime(start)}
+          </div>
+        )}
+        <h3 className="mt-1 text-sm font-semibold leading-snug text-slate-900">
+          {displayTitle}
+        </h3>
+      </div>
+    );
+  }
 
   return (
     <div
       onClick={onOpen}
       className={cn(
-        "group cursor-pointer rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
+        "group cursor-pointer rounded-2xl border border-slate-200/70 bg-white p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
         isDone && "opacity-60"
       )}
     >
-      {event.priority && (
-        <span
-          className={cn(
-            "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium",
-            priorityStyles[event.priority]
-          )}
-        >
-          {priorityLabel[event.priority]}
-        </span>
-      )}
-
       <h3
         className={cn(
-          "mt-3 text-[15px] font-semibold leading-tight text-slate-900",
+          "text-sm font-semibold leading-snug text-slate-900",
           isDone && "text-slate-400 line-through"
         )}
       >
-        {event.title}
+        {displayTitle}
       </h3>
 
-      {event.body && !isDone && (
-        <p className="mt-2 text-sm leading-relaxed text-slate-500 line-clamp-2">
-          {event.body}
-        </p>
-      )}
-
-      <div className="mt-4 flex items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {event.workspace && (
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px] font-medium capitalize",
-                workspaceStyles[event.workspace]
-              )}
-            >
-              {event.workspace}
-            </span>
-          )}
-          {event.due_date && (
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                isPastDue
-                  ? "bg-rose-100 text-rose-700"
-                  : "bg-slate-100 text-slate-600"
-              )}
-            >
-              {formatDueDate(event.due_date)}
-            </span>
-          )}
-        </div>
-
-        <div
-          className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {event.task_status === "inbox" && (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="Confirm"
-                onClick={onConfirm}
-                className="h-7 w-7 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
-              >
-                <Check className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="Dismiss"
-                onClick={onDismiss}
-                className="h-7 w-7 text-slate-500 hover:bg-rose-50 hover:text-rose-600"
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </>
-          )}
-          {event.task_status === "active" && (
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="Mark done"
-              onClick={onMarkDone}
-              className="h-7 w-7 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
-            >
-              <Check className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </div>
+      <div
+        className="mt-3 flex flex-wrap items-center gap-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <DueDatePill
+          value={event.due_date}
+          onChange={handleDueDateChange}
+        />
+        <WorkspacePill
+          value={event.workspace}
+          onChange={handleWorkspaceChange}
+        />
+        {hasLink && (
+          <span
+            className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"
+            title={`${event.links.length} link${event.links.length === 1 ? "" : "s"}`}
+          >
+            <Link2 className="h-3 w-3" />
+          </span>
+        )}
       </div>
     </div>
+  );
+}
+
+function DueDatePill({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (v: string) => void;
+}) {
+  const label = value ? formatMonthDay(new Date(value)) : "No date";
+  const hasDate = !!value;
+  return (
+    <label
+      className={cn(
+        "relative inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium",
+        hasDate ? "bg-slate-100 text-slate-700" : UNSET_WORKSPACE_STYLE
+      )}
+    >
+      <span>{label}</span>
+      <input
+        type="date"
+        value={toDateInputValue(value)}
+        onChange={(e) => onChange(e.target.value)}
+        className="absolute inset-0 cursor-pointer opacity-0"
+      />
+    </label>
+  );
+}
+
+function WorkspacePill({
+  value,
+  onChange,
+}: {
+  value: Workspace | null;
+  onChange: (v: string) => void;
+}) {
+  const style = value ? WORKSPACE_STYLES[value] : UNSET_WORKSPACE_STYLE;
+  const label = value
+    ? value.charAt(0).toUpperCase() + value.slice(1)
+    : "Type";
+  return (
+    <label
+      className={cn(
+        "relative inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium",
+        style
+      )}
+    >
+      <span>{label}</span>
+      <select
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        className="absolute inset-0 cursor-pointer opacity-0"
+      >
+        <option value="">Unset</option>
+        {WORKSPACE_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

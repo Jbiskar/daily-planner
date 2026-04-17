@@ -177,10 +177,10 @@ export function TaskSheet({ event, open, onOpenChange, onUpdated }: TaskSheetPro
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__unset__">Unset</SelectItem>
-                  <SelectItem value="personal">Personal</SelectItem>
                   <SelectItem value="atlan">Atlan</SelectItem>
                   <SelectItem value="landit">Landit</SelectItem>
-                  <SelectItem value="general">General</SelectItem>
+                  <SelectItem value="consulting">Consulting</SelectItem>
+                  <SelectItem value="personal">Personal</SelectItem>
                 </SelectContent>
               </Select>
             </div>
