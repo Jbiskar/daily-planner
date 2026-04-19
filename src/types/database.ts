@@ -111,6 +111,18 @@ export interface ContextDoc {
   updated_at: string;
 }
 
+export interface GoogleOAuthTokens {
+  id: string;
+  email: string;
+  access_token: string;
+  refresh_token: string;
+  scope: string;
+  token_type: string;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UpdateHistory {
   id: string;
   project_id: string;

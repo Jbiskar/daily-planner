@@ -8,6 +8,7 @@ import {
   FolderKanban,
   ListTodo,
   FileText,
+  CalendarDays,
   Mic,
 } from "lucide-react";
 
@@ -15,6 +16,7 @@ const nav = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Projects", href: "/projects", icon: FolderKanban },
   { label: "Tasks", href: "/tasks", icon: ListTodo },
+  { label: "Calendar", href: "/calendar", icon: CalendarDays },
   { label: "Updates", href: "/updates", icon: FileText },
 ];
 
