@@ -6,6 +6,8 @@ import type {
   Workspace,
   TaskPriority,
 } from "@/types/database";
+import type { GranolaNote, GranolaAttendee } from "@/lib/granola";
+import { jakeEmails } from "@/lib/granola";
 
 let _anthropic: Anthropic | null = null;
 function getAnthropic() {
@@ -179,4 +181,108 @@ export async function ingestAndClassify(
   }
 
   return classified as Event;
+}
+
+export interface ExtractedActionItem {
+  title: string;
+  priority: TaskPriority | null;
+  due_date: string | null;
+  notes: string | null;
+  stakeholder_emails: string[];
+}
+
+interface ExtractActionItemsOptions {
+  excludeTitles?: string[];
+}
+
+export async function extractActionItems(
+  note: GranolaNote,
+  options: ExtractActionItemsOptions = {}
+): Promise<ExtractedActionItem[]> {
+  const summary = note.summary_markdown?.trim();
+  if (!summary) return [];
+
+  const attendeeLines = (note.attendees ?? [])
+    .map((a: GranolaAttendee) => {
+      const name = a.name ?? "(unnamed)";
+      const email = a.email ?? "(no email)";
+      return `- ${name} <${email}>`;
+    })
+    .join("\n");
+
+  const emails = jakeEmails();
+  const jakeIdentity =
+    emails.length > 0
+      ? `Jake's emails: ${emails.join(", ")}. Any attendee at one of those addresses IS Jake.`
+      : "Jake's emails were not configured. Use best judgment.";
+
+  const excludePreamble =
+    options.excludeTitles && options.excludeTitles.length > 0
+      ? `Items already extracted from this meeting (do NOT duplicate):\n${options.excludeTitles
+          .map((t) => `- ${t}`)
+          .join("\n")}\n\nReturn only new items.\n\n`
+      : "";
+
+  const system = `You are reading meeting notes. Extract ONLY action items that Jake is responsible for completing — either solo or as a co-owner. Skip items assigned exclusively to someone else.
+
+${jakeIdentity}
+
+For each action item, return:
+- title: short imperative phrase ("Send Q3 deck to Sarah"). 8 words or less when possible.
+- priority: "high" | "medium" | "low" based on urgency signals. "ASAP", "blocker", "before the demo" → high. "when you have time", "eventually" → low. Default medium.
+- due_date: ISO 8601 timestamp (YYYY-MM-DDTHH:mm:ss-07:00) or null. Parse "by Friday", "EOD", "next week", "tomorrow morning" relative to the meeting date (${note.calendar_event?.scheduled_start_time ?? note.created_at ?? "unknown"}). Null if no date is implied.
+- notes: 1–3 sentences describing what specifically needs to happen, including any context or co-owner. If Jake is co-owner with someone, mention them here.
+- stakeholder_emails: array of attendee emails relevant to this action (exclude Jake's own email).
+
+Respond with ONLY a JSON array. No preamble. Return [] if there are no action items for Jake.`;
+
+  const user = `${excludePreamble}Meeting: ${note.title}
+Meeting time: ${note.calendar_event?.scheduled_start_time ?? note.created_at ?? "(unknown)"}
+Attendees:
+${attendeeLines || "(no attendees listed)"}
+
+Summary:
+${summary}`;
+
+  const message = await getAnthropic().messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 2048,
+    system,
+    messages: [{ role: "user", content: user }],
+  });
+
+  const text =
+    message.content[0].type === "text" ? message.content[0].text : "";
+
+  const jsonStart = text.indexOf("[");
+  const jsonEnd = text.lastIndexOf("]");
+  if (jsonStart === -1 || jsonEnd === -1) return [];
+
+  try {
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (p): p is Record<string, unknown> =>
+          typeof p === "object" && p !== null
+      )
+      .map((p) => ({
+        title: typeof p.title === "string" ? p.title.trim() : "",
+        priority: isPriority(p.priority) ? p.priority : null,
+        due_date: typeof p.due_date === "string" ? p.due_date : null,
+        notes: typeof p.notes === "string" ? p.notes : null,
+        stakeholder_emails: Array.isArray(p.stakeholder_emails)
+          ? p.stakeholder_emails
+              .filter((e): e is string => typeof e === "string")
+              .map((e) => e.trim().toLowerCase())
+          : [],
+      }))
+      .filter((a) => a.title.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function isPriority(v: unknown): v is TaskPriority {
+  return v === "high" || v === "medium" || v === "low";
 }

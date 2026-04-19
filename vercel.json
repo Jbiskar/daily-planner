@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/granola-live-poll",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/granola-daily-review",
+      "schedule": "0 13 * * *"
+    }
+  ]
+}
